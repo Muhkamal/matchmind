@@ -1,0 +1,21 @@
+name: nightly
+on:
+  schedule: [{ cron: "55 22 * * *" }]   # 22:55 UTC daily
+  workflow_dispatch: {}
+concurrency: { group: matchmind-nightly, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: matchmind } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      # Exit code 1 (red run) means: an error, an unmapped club, a skipped fixture or too little history.
+      - run: python nightly.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FOOTBALL_DATA_ORG_KEY: ${{ secrets.FOOTBALL_DATA_ORG_KEY }}
+          LEAGUES: E0

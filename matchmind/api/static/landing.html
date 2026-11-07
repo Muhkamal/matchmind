@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MatchMind: football predictions you can audit</title>
+<meta name="description" content="Every pick is locked in an append-only ledger before kickoff and graded in public, misses included.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root {
+  --bg: #0a0d12; --surface: #11151c; --surface-alt: #151a23; --surface-hover: #1a202b;
+  --border: #232a36; --border-hover: #34405a;
+  --text: #e8edf5; --text-secondary: #a3adbd; --text-tertiary: #6f7a8c;
+  --accent: #5aa9ff; --accent-hover: #82bfff;
+  --home: #3ecf8e; --draw: #8a94a6; --away: #b794f6;
+  --bg-rgb: 10, 13, 18; --accent-rgb: 90, 169, 255; --home-rgb: 62, 207, 142; --away-rgb: 183, 148, 246;
+  --success: #3ecf8e; --error: #f5656b; --warning: #e8b04a; --warning-rgb: 232, 176, 74; --error-rgb: 245, 101, 107;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text-secondary); font: 400 16px/1.6 var(--font-sans); overflow-x: hidden; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:hover { color: var(--accent-hover); }
+a:focus-visible, .btn:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+code, .mono { font-family: var(--font-mono); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+/* top bar */
+.topbar { position: sticky; top: 0; z-index: 30; background: rgba(var(--bg-rgb), .94); border-bottom: 1px solid var(--border); }
+.topbar .wrap { display: flex; align-items: center; gap: 20px; min-height: 60px; }
+.brand { font: 800 19px/1 var(--font-sans); color: var(--text); text-decoration: none; letter-spacing: -0.02em; }
+.brand span { color: var(--accent); }
+.topbar nav { display: flex; gap: 4px; margin-left: 12px; }
+.topbar nav a { color: var(--text-secondary); text-decoration: none; font: 500 14px var(--font-sans); padding: 10px 12px; border-radius: 6px; }
+.topbar nav a:hover { color: var(--text); background: var(--surface-hover); }
+.topbar .spacer { flex: 1; }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 20px;
+  font: 600 15px/1 var(--font-sans); color: var(--text); background: var(--surface-alt); border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; text-decoration: none; transition: background .15s, border-color .15s, transform .15s; will-change: transform; }
+.btn:hover { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.btn--primary { background: var(--accent); color: var(--bg); border-color: transparent; }
+.btn--primary:hover { background: var(--accent-hover); color: var(--bg); }
+.btn svg { width: 16px; height: 16px; }
+
+/* hero */
+.hero { position: relative; padding: 88px 0 72px; border-bottom: 1px solid var(--border); overflow: hidden; }
+.hero::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px; opacity: .35;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 20%, var(--bg) 0%, transparent 70%); mask-image: radial-gradient(ellipse at 50% 20%, var(--bg) 0%, transparent 70%); }
+.hero::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(520px circle at var(--mx, 70%) var(--my, 25%), rgba(var(--accent-rgb), .13), transparent 60%); }
+.hero .wrap { position: relative; z-index: 1; display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px; align-items: center; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface); font: 500 12.5px var(--font-sans); color: var(--text-secondary); }
+.eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+h1 { font: 800 clamp(36px, 6vw, 64px)/1.05 var(--font-sans); color: var(--text); letter-spacing: -0.035em; margin: 18px 0 18px; }
+h1 .w { display: inline-block; opacity: 0; transform: translateY(14px); animation: wordUp .6s cubic-bezier(.2,.7,.2,1) forwards; }
+h1 em { font-style: normal; color: var(--accent); background: linear-gradient(var(--accent), var(--accent)) 0 100% / 100% 3px no-repeat; padding-bottom: 4px; }
+@keyframes wordUp { to { opacity: 1; transform: none; } }
+.lede { font-size: 18px; color: var(--text-secondary); max-width: 560px; }
+.cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.fine { margin-top: 16px; font: 400 13px/1.5 var(--font-sans); color: var(--text-tertiary); max-width: 520px; }
+
+/* ledger card (hero visual) */
+.ledger { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px; }
+.ledger-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font: 500 12px var(--font-mono); color: var(--text-tertiary); }
+.ledger-head b { color: var(--text-secondary); font-weight: 600; }
+.entry { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 12px; border-top: 1px solid var(--border); opacity: 0; transform: translateY(8px);
+  animation: wordUp .5s ease-out forwards; }
+.entry:nth-of-type(1) { animation-delay: .5s; } .entry:nth-of-type(2) { animation-delay: .9s; } .entry:nth-of-type(3) { animation-delay: 1.3s; }
+.entry .m { font: 600 15px var(--font-sans); color: var(--text); }
+.entry .t { font: 500 11.5px var(--font-mono); color: var(--text-tertiary); }
+.lock { display: inline-flex; align-items: center; gap: 6px; font: 600 11.5px var(--font-mono); color: var(--success); justify-self: end; }
+.lock svg { width: 13px; height: 13px; }
+.probs { grid-column: 1 / -1; display: flex; height: 8px; border-radius: 3px; overflow: hidden; background: var(--surface-alt); }
+.probs .h { background: var(--home); } .probs .d { background: var(--draw); } .probs .a { background: var(--away); }
+.probnums { grid-column: 1 / -1; display: flex; justify-content: space-between; font: 500 12px var(--font-mono); color: var(--text-secondary); }
+.ledger-foot { padding: 10px 12px; border-top: 1px solid var(--border); font: 500 11.5px var(--font-mono); color: var(--text-tertiary); }
+
+/* stats strip */
+.stats { border-bottom: 1px solid var(--border); background: var(--surface); }
+.stats .wrap { display: grid; grid-template-columns: repeat(3, 1fr); }
+.stat { padding: 28px 20px; border-left: 1px solid var(--border); }
+.stat:first-child { border-left: 0; padding-left: 0; }
+.stat .v { font: 600 34px/1.1 var(--font-mono); color: var(--text); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat .l { margin-top: 6px; font: 500 13px var(--font-sans); color: var(--text-tertiary); }
+
+/* marquee */
+.marquee { overflow: hidden; border-bottom: 1px solid var(--border); background: var(--bg); }
+.marquee-track { display: flex; width: max-content; animation: slide 38s linear infinite; }
+.marquee-track span { font: 800 clamp(28px, 5vw, 52px)/1 var(--font-sans); letter-spacing: -0.03em; color: var(--text-tertiary);
+  padding: 26px 28px; white-space: nowrap; text-transform: uppercase; }
+.marquee-track span.hl { color: var(--text); }
+.marquee-track span::after { content: "/"; color: var(--border-hover); margin-left: 56px; }
+@keyframes slide { to { transform: translateX(-50%); } }
+
+/* sections */
+section { padding: 88px 0; }
+.kicker { font: 600 12.5px var(--font-sans); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+h2 { font: 700 clamp(28px, 4vw, 40px)/1.15 var(--font-sans); color: var(--text); letter-spacing: -0.025em; margin: 10px 0 14px; max-width: 760px; }
+.sub { max-width: 640px; color: var(--text-secondary); }
+.rv { opacity: 0; transform: translateY(14px); transition: opacity .5s ease-out, transform .5s ease-out; }
+.rv.in { opacity: 1; transform: none; }
+
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 24px; transition: border-color .15s; }
+.card:hover { border-color: var(--border-hover); }
+.step .n { font: 600 13px var(--font-mono); color: var(--accent); }
+.step h3 { font: 600 19px/1.3 var(--font-sans); color: var(--text); margin: 10px 0 8px; }
+
+/* bento */
+.bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 40px; }
+.b1 { grid-column: span 4; } .b2 { grid-column: span 2; } .b3 { grid-column: span 2; } .b4 { grid-column: span 4; }
+.spot { position: relative; overflow: hidden; }
+.spot::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 50%), rgba(var(--accent-rgb), .12), transparent 60%); }
+.spot:hover::before { opacity: 1; }
+.spot > * { position: relative; }
+.bento h3 { font: 600 20px/1.3 var(--font-sans); color: var(--text); margin-bottom: 8px; }
+.term { margin-top: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font: 500 13px/1.9 var(--font-mono); color: var(--text-secondary); overflow-x: auto; }
+.term .no { color: var(--error); font-weight: 600; } .term .ok { color: var(--success); font-weight: 600; } .term .c { color: var(--text-tertiary); }
+.mini { margin-top: 16px; }
+.mini svg { width: 100%; height: auto; display: block; }
+.mini .g { stroke: var(--border); } .mini .dg { stroke: var(--accent); stroke-dasharray: 4 4; } .mini circle { fill: rgba(var(--home-rgb), .85); }
+.bigdig { font: 700 40px/1 var(--font-mono); color: var(--text); margin: 14px 0 6px; letter-spacing: -0.03em; }
+.badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; font: 600 11px var(--font-sans); border-radius: 999px;
+  border: 1px solid rgba(var(--warning-rgb), .4); color: var(--warning); margin-left: 8px; vertical-align: middle; }
+
+/* do / don't */
+.dd { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 40px; }
+.dd h3 { font: 600 18px var(--font-sans); color: var(--text); margin-bottom: 14px; }
+.dd ul { list-style: none; padding: 0; display: grid; gap: 12px; }
+.dd li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; }
+.dd svg { width: 18px; height: 18px; margin-top: 3px; }
+.ico-ok { color: var(--success); } .ico-no { color: var(--error); }
+
+/* verify */
+.verify .code { margin-top: 24px; display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 10px 10px 18px; max-width: 640px; flex-wrap: wrap; }
+.verify code { flex: 1; min-width: 200px; font: 500 14px var(--font-mono); color: var(--text); overflow-x: auto; white-space: nowrap; }
+
+.final { text-align: center; }
+.final h2, .final .sub { margin-left: auto; margin-right: auto; }
+.final .cta-row { justify-content: center; }
+
+footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--text-tertiary); font-size: 13px; line-height: 1.7; }
+footer p { max-width: 760px; }
+footer .links { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); background: var(--surface-alt); border: 1px solid var(--border-hover);
+  color: var(--text); padding: 10px 16px; border-radius: 10px; font: 500 14px var(--font-sans); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 50; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 900px) {
+  .hero .wrap { grid-template-columns: 1fr; gap: 36px; }
+  .hero { padding: 56px 0 48px; }
+  .steps, .dd { grid-template-columns: 1fr; }
+  .bento { grid-template-columns: 1fr; }
+  .b1, .b2, .b3, .b4 { grid-column: auto; }
+  section { padding: 64px 0; }
+}
+@media (max-width: 600px) {
+  .wrap { padding: 0 16px; }
+  .topbar nav { display: none; }
+  .stats .wrap { grid-template-columns: 1fr; }
+  .stat { border-left: 0; border-top: 1px solid var(--border); padding: 18px 0; }
+  .stat:first-child { border-top: 0; }
+  .cta-row .btn { flex: 1 1 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  h1 .w, .entry, .rv { opacity: 1 !important; transform: none !important; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/">Match<span>Mind</span></a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a><a href="#guarantees">Guarantees</a><a href="#honest">Honest limits</a><a href="#verify">Verify</a>
+    </nav>
+    <div class="spacer"></div>
+    <a class="btn btn--primary" href="/dashboard">Live dashboard</a>
+  </div>
+</header>
+
+<main>
+<div class="hero" id="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Append-only ledger · Premier League</span>
+      <h1 id="h1">Football predictions you can <em>audit</em>.</h1>
+      <p class="lede">Every pick is locked before kickoff, graded automatically from real results, and published in full, misses included. No edits. No deleted losses. No hype.</p>
+      <div class="cta-row">
+        <a class="btn btn--primary magnet" href="/dashboard">See the live record
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+        <a class="btn magnet" id="tg" href="#" rel="noopener">Join on Telegram</a>
+      </div>
+      <p class="fine">Probabilities, not promises. Football is noisy, and this is not betting advice.</p>
+    </div>
+
+    <div class="ledger" aria-label="Example ledger entries">
+      <div class="ledger-head"><b>ledger</b><span>EXAMPLE ENTRIES</span></div>
+      <div class="entry">
+        <div><div class="m">Arsenal – Chelsea</div><div class="t">locked 2d 04h before kickoff</div></div>
+        <div class="lock"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>LOCKED</div>
+        <div class="probs" role="img" aria-label="Home 52, draw 27, away 21 percent"><div class="h" style="width:52%"></div><div class="d" style="width:27%"></div><div class="a" style="width:21%"></div></div>
+        <div class="probnums"><span>H 52%</span><span>D 27%</span><span>A 21%</span></div>
+      </div>
+      <div class="entry">
+        <div><div class="m">Everton – Fulham</div><div class="t">locked 1d 18h before kickoff</div></div>
+        <div class="lock"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>LOCKED</div>
+        <div class="probs" role="img" aria-label="Home 38, draw 30, away 32 percent"><div class="h" style="width:38%"></div><div class="d" style="width:30%"></div><div class="a" style="width:32%"></div></div>
+        <div class="probnums"><span>H 38%</span><span>D 30%</span><span>A 32%</span></div>
+      </div>
+      <div class="entry">
+        <div><div class="m">Brentford – Wolves</div><div class="t">graded · result 2–0</div></div>
+        <div class="lock"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>HIT</div>
+        <div class="probs" role="img" aria-label="Home 55, draw 25, away 20 percent"><div class="h" style="width:55%"></div><div class="d" style="width:25%"></div><div class="a" style="width:20%"></div></div>
+        <div class="probnums"><span>H 55%</span><span>D 25%</span><span>A 20%</span></div>
+      </div>
+      <div class="ledger-foot">Illustration only. Real entries are on the live dashboard.</div>
+    </div>
+  </div>
+</div>
+
+<div class="stats" aria-live="polite">
+  <div class="wrap">
+    <div class="stat"><div class="v" id="s-graded">–</div><div class="l">graded live picks in the ledger</div></div>
+    <div class="stat"><div class="v" id="s-acc">–</div><div class="l">live accuracy (sample size shown on the dashboard)</div></div>
+    <div class="stat"><div class="v" id="s-edits">0</div><div class="l">edits or deletions the database allows</div></div>
+  </div>
+</div>
+
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track">
+    <span class="hl">Locked before kickoff</span><span>No edits</span><span class="hl">Misses published</span><span>No deleted losses</span><span class="hl">Graded in public</span><span>No tipster hype</span>
+    <span class="hl">Locked before kickoff</span><span>No edits</span><span class="hl">Misses published</span><span>No deleted losses</span><span class="hl">Graded in public</span><span>No tipster hype</span>
+  </div>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="kicker rv">How it works</div>
+    <h2 class="rv">Three steps, all automatic.</h2>
+    <p class="sub rv">Nobody (including us) touches a pick after it is written.</p>
+    <div class="steps">
+      <div class="card step rv"><div class="n">01</div><h3>Lock</h3><p>The nightly job fits the model, writes each probability to the ledger, and the database refuses anything created at or after kickoff.</p></div>
+      <div class="card step rv"><div class="n">02</div><h3>Grade</h3><p>When the final score arrives, picks are graded with proper scoring (Brier), not cherry-picked wins.</p></div>
+      <div class="card step rv"><div class="n">03</div><h3>Show everything</h3><p>The dashboard shows the record, the calibration chart, and the biggest misses. You see the failures first.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="guarantees" style="border-top:1px solid var(--border)">
+  <div class="wrap">
+    <div class="kicker rv">Guarantees</div>
+    <h2 class="rv">Enforced by the database, not by promises.</h2>
+    <div class="bento">
+      <div class="card spot b1 rv">
+        <h3>An append-only ledger</h3>
+        <p>Triggers reject changes to the ledger tables. A unique index keeps only the first live pick per match, and a check refuses a pick created after kickoff.</p>
+        <div class="term" aria-label="Examples of statements the database rejects">
+          <div><span class="c">-- what the database says</span></div>
+          <div>UPDATE predictions …&nbsp;&nbsp;<span class="no">✗ rejected</span></div>
+          <div>DELETE FROM predictions&nbsp;&nbsp;<span class="no">✗ rejected</span></div>
+          <div>second pick, same match&nbsp;&nbsp;<span class="no">✗ ignored</span></div>
+          <div>pick after kickoff&nbsp;&nbsp;<span class="no">✗ rejected</span></div>
+          <div>new pick before kickoff&nbsp;&nbsp;<span class="ok">✓ appended</span></div>
+        </div>
+      </div>
+      <div class="card spot b2 rv">
+        <h3>Calibration on display</h3>
+        <p>If we say 60%, it should happen about 60% of the time. The chart is public.</p>
+        <div class="mini" aria-hidden="true">
+          <svg viewBox="0 0 200 120"><line class="g" x1="20" y1="100" x2="190" y2="100"/><line class="g" x1="20" y1="10" x2="20" y2="100"/>
+            <line class="dg" x1="20" y1="100" x2="190" y2="10"/>
+            <circle cx="50" cy="82" r="4"/><circle cx="80" cy="66" r="5"/><circle cx="112" cy="52" r="5"/><circle cx="142" cy="36" r="4"/><circle cx="172" cy="22" r="4"/></svg>
+        </div>
+      </div>
+      <div class="card spot b3 rv">
+        <h3>The arena</h3>
+        <p>Beat the model head-to-head on Telegram. Picks are final and close at kickoff. You appear on the board after 10 settled picks, under a nickname you choose.</p>
+      </div>
+      <div class="card spot b4 rv">
+        <h3>Goal markets, held to a baseline<span class="badge">experimental</span></h3>
+        <p>Over 2.5 goals and both-teams-to-score come from the same scoreline table as the match pick, so they can never contradict it. They are graded against "just predict the average", and if they do not beat that, the dashboard says so.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="honest" style="border-top:1px solid var(--border)">
+  <div class="wrap">
+    <div class="kicker rv">Honest limits</div>
+    <h2 class="rv">What we do, and what we will not do.</h2>
+    <div class="dd">
+      <div class="card rv"><h3>We do</h3>
+        <ul>
+          <li><svg class="ico-ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg><span>Publish every pick before kickoff and every result after.</span></li>
+          <li><svg class="ico-ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg><span>Show the sample size next to every rate and a baseline next to every score.</span></li>
+          <li><svg class="ico-ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg><span>Explain the method: an Elo and Dixon-Coles ensemble on match results.</span></li>
+        </ul></div>
+      <div class="card rv"><h3>We do not</h3>
+        <ul>
+          <li><svg class="ico-no" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Sell picks, "slips" or booking codes, or promise profit.</span></li>
+          <li><svg class="ico-no" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Claim to beat bookmaker prices: the model sees results only, with no lineups, injuries or odds.</span></li>
+          <li><svg class="ico-no" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Hide the losses. They sit on the dashboard under "biggest misses".</span></li>
+        </ul></div>
+    </div>
+  </div>
+</section>
+
+<section id="verify" class="verify" style="border-top:1px solid var(--border)">
+  <div class="wrap">
+    <div class="kicker rv">Verify it yourself</div>
+    <h2 class="rv">Do not trust us. Read the raw data.</h2>
+    <p class="sub rv">The API is public and read-only. Copy the call, open it, and compare it with what we show.</p>
+    <div class="code rv">
+      <code id="api-call">curl https://YOUR-DOMAIN/api/upcoming</code>
+      <button class="btn" id="copy" type="button">Copy</button>
+    </div>
+  </div>
+</section>
+
+<section class="final" style="border-top:1px solid var(--border)">
+  <div class="wrap">
+    <h2 class="rv">See the record before you decide anything.</h2>
+    <p class="sub rv">Small samples are noisy. Judge the model over hundreds of picks, not a few.</p>
+    <div class="cta-row rv"><a class="btn btn--primary magnet" href="/dashboard">Open the live dashboard</a></div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links"><a href="/dashboard">Dashboard</a><a href="/docs">API docs</a><a id="tg2" href="#" rel="noopener">Telegram</a></div>
+    <p>MatchMind provides statistical estimates for information and entertainment. It is not betting or financial advice and offers no guarantee of any outcome. Gambling carries risk and is for adults only (18+). If gambling is a problem for you, seek help from a local support service.</p>
+  </div>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ---- configure ---- */
+const TELEGRAM_URL = "";   // e.g. "https://t.me/YourMatchMindBot"; empty = button is disabled
+/* ------------------ */
+const $ = s => document.querySelector(s);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const fine = matchMedia("(hover: hover)").matches;
+
+/* telegram buttons */
+[["#tg"], ["#tg2"]].forEach(([s]) => {
+  const a = $(s); if (!a) return;
+  if (TELEGRAM_URL) { a.href = TELEGRAM_URL; a.target = "_blank"; }
+  else { a.setAttribute("aria-disabled", "true"); a.removeAttribute("href"); a.title = "Telegram bot coming soon"; }
+});
+
+/* H1 word reveal */
+(function () {
+  const h = $("#h1"); if (reduce) return;
+  const walk = node => [...node.childNodes].forEach(n => {
+    if (n.nodeType === 3) {
+      const frag = document.createDocumentFragment();
+      n.textContent.split(/(\s+)/).forEach(t => {
+        if (!t.trim()) { frag.append(t); return; }
+        const sp = document.createElement("span"); sp.className = "w"; sp.textContent = t; frag.append(sp);
+      });
+      n.replaceWith(frag);
+    } else if (n.nodeType === 1) walk(n);
+  });
+  walk(h);
+  h.querySelectorAll(".w").forEach((w, i) => w.style.animationDelay = (0.05 + i * 0.07) + "s");
+})();
+
+/* scroll reveal (once) */
+const rv = document.querySelectorAll(".rv");
+if ("IntersectionObserver" in window && !reduce) {
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }), {rootMargin: "0px 0px -8% 0px", threshold: 0.08});
+  rv.forEach((el, i) => { el.style.transitionDelay = (i % 3) * 60 + "ms"; io.observe(el); });
+} else rv.forEach(el => el.classList.add("in"));
+
+/* pointer effects: rAF-throttled, only on devices with hover */
+if (fine && !reduce) {
+  let raf = 0, px = 0, py = 0, target = null;
+  const hero = $("#hero");
+  document.addEventListener("pointermove", e => {
+    px = e.clientX; py = e.clientY; target = e.target;
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const hr = hero.getBoundingClientRect();
+      if (py >= hr.top && py <= hr.bottom) { hero.style.setProperty("--mx", (px - hr.left) + "px"); hero.style.setProperty("--my", (py - hr.top) + "px"); }
+      const card = target && target.closest && target.closest(".spot");
+      if (card) { const r = card.getBoundingClientRect(); card.style.setProperty("--mx", (px - r.left) + "px"); card.style.setProperty("--my", (py - r.top) + "px"); }
+    });
+  }, {passive: true});
+  document.querySelectorAll(".magnet").forEach(b => {
+    b.addEventListener("pointermove", e => {
+      const r = b.getBoundingClientRect();
+      b.style.transform = `translate(${((e.clientX - r.left) / r.width - .5) * 8}px, ${((e.clientY - r.top) / r.height - .5) * 6}px)`;
+    });
+    b.addEventListener("pointerleave", () => { b.style.transform = ""; });
+  });
+}
+
+/* live stats (falls back quietly if the API is unreachable) */
+fetch("/api/status").then(r => r.ok ? r.json() : Promise.reject()).then(s => {
+  $("#s-graded").textContent = s.graded_live_picks;
+  $("#s-acc").textContent = s.graded_live_picks && s.live_accuracy != null ? (s.live_accuracy * 100).toFixed(1) + "%" : "–";
+}).catch(() => {});
+
+/* verify block: the small detail */
+$("#api-call").textContent = "curl " + location.origin + "/api/upcoming";
+let t;
+$("#copy").addEventListener("click", async () => {
+  const text = $("#api-call").textContent;
+  try { await navigator.clipboard.writeText(text); } catch (e) { /* clipboard blocked: still show the text */ }
+  const b = $("#copy"); b.textContent = "Copied. Now go check us.";
+  const toast = $("#toast"); toast.textContent = "Copied to clipboard"; toast.classList.add("show");
+  clearTimeout(t); t = setTimeout(() => { b.textContent = "Copy"; toast.classList.remove("show"); }, 2600);
+});
+</script>
+</body>
+</html>

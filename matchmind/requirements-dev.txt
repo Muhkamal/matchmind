@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8.0
+httpx>=0.27
+pyflakes>=3.0
+# embedded Postgres for tests/test_sql.py etc. (or set TEST_DATABASE_URL to a throwaway database)
+pixeltable-pgserver>=0.4

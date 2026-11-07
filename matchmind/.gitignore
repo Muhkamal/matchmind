@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.template
+data/
+*.pkl
+__pycache__/
+.pytest_cache/
+.venv/
+weekly-report-*.md
+*.egg-info/
