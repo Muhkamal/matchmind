@@ -138,4 +138,6 @@ def test_extra_market_endpoints(client, pg_uri):
     assert {r["market"] for r in rows} == {"dc_1x", "score_top1"} and rows[0]["home_team_name"]
     cat = {r["market"] for r in client.get("/api/market-catalog").json()}
     assert "over_3_5" in cat and "cs_home" in cat
+    ev = {r["market"]: r["backtest"] for r in client.get("/api/market-catalog").json()}
+    assert ev["dc_1x"] == "edge" and ev["over_3_5"] == "none"
     assert client.get("/api/extra-market-record").json() == []            # nothing graded yet: no invented record

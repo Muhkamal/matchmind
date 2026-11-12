@@ -17,18 +17,19 @@ Tune on seasons up to 2022-23, select on 2023-24, report on later held-out seaso
 `python backtest.py` runs the production model walk-forward (refit every 30 days, no look-ahead) per season and prints 1X2 accuracy / Brier / log loss against uniform and base-rate references, plus Over 2.5 and BTTS against their base-rate baselines.
 
 ## Backtest results (re-run on real data, Nov 2026)
-Premier League, walk-forward, results only (no odds, lineups or injuries). Run on `data/history/E0.csv` (2023-24 to 2025-26, 1,140 matches).
+Premier League, walk-forward (train on the past, predict the next matches), results only: no lineups, injuries or odds feed the model.
+Run on `data/history/E0.csv` (2023-24 to 2025-26). 2023-24 is warm-up (44 matches scored) and is not reported.
 
-| Season | Matches scored | 1X2 accuracy | 1X2 Brier | Base-rate Brier | Uniform Brier | Log loss |
+| Season | Matches | 1X2 accuracy | 1X2 Brier | Base-rate Brier | Uniform Brier | 95% interval, model minus base rate |
 |---|---|---|---|---|---|---|
-| 2024-25 | 374 | 50.8% | 0.5975 | 0.6572 | 0.6667 | 1.0006 |
-| 2025-26 | 376 | 47.1% | 0.6182 | 0.6584 | 0.6667 | 1.0324 |
+| 2024-25 | 374 | 50.8% | 0.5975 | 0.6572 | 0.6667 | -0.083 to -0.036 |
+| 2025-26 | 376 | 47.1% | 0.6182 | 0.6584 | 0.6667 | -0.060 to -0.018 |
 
-- 2023-24 is warm-up (only 44 matches scored) and is not reported.
-- 1X2 beats the league base rate in both seasons, a modest edge.
-- Over 2.5 and BTTS do **not** reliably beat their base rates (Over 2.5 fails in 2025-26; BTTS fails in both seasons), so they are labelled experimental.
-- A single season has an accuracy standard error of about 5 points, and the edge was smaller in 2025-26; do not over-read either season.
-- Bookmaker closing prices usually score better than a results-only model. This project's claim is an auditable record, not beating the market.
+- **1X2 has a real but modest edge over league base rates** in both seasons (the interval is entirely below zero).
+- **Against the bookmakers it is behind.** Pinnacle closing prices with the margin removed scored 0.5781 vs the model's 0.5975 in 2024-25 (374 matches; accuracy 55.1% vs 50.8%). In 2025-26 Pinnacle prices exist for only 206 of 376 matches; on those the gap was 0.0032 Brier (0.5932 vs 0.5964).
+- **No betting edge.** Flat 1-unit bets wherever the model disagreed with Pinnacle closing prices lost money at every threshold tested (ROI -7% to -14%, intervals include zero). Do not use these picks for betting.
+- Dixon-Coles alone scored as well as or better than the Elo/Dixon-Coles blend in both seasons (Brier 0.5886 vs 0.5975 and 0.6179 vs 0.6182), and Elo alone was clearly worse. The blend weight is a candidate to revisit with fresh out-of-sample data.
+- **Extra markets:** double chance 1X/X2, clean sheets, win to nil, a team scoring 2+, home scoring 3+ and the +/-1.5 handicaps beat the best constant forecast in both seasons. Goal totals (Over 1.5/3.5, goal bands, BTTS with Over, double chance 12, the top-5 score list) did not, and Over 2.5 and BTTS only matched base rates. In short: the model has some team-strength skill and no total-goals skill. The dashboard marks markets without an edge with an asterisk.
 - A backtest is not a forecast. The live ledger is the real record.
 
 ## Layout

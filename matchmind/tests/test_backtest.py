@@ -94,3 +94,15 @@ def test_value_research_finds_no_bets_when_prices_equal_the_model_and_handles_re
     assert out["matches"] == len(pred) and first["n"] > 30 and first["ci_low"] <= first["roi"] <= first["ci_high"]
     # no odds columns -> None, never an invented result
     assert backtest.value_research(pred, base) is None
+
+
+def test_odds_source_with_best_coverage_is_used():
+    import numpy as np
+    df = make_history(n_seasons=3, start_year=2021)
+    pred = backtest.walk_forward(df, pd.Timestamp("2023-08-01"), "2024-07-01", refit_days=90)
+    odds = pred[["Date", "HomeTeam", "AwayTeam"]].copy()
+    odds["PSCH"], odds["PSCD"], odds["PSCA"] = 2.4, 3.3, 3.1
+    odds["AvgCH"], odds["AvgCD"], odds["AvgCA"] = 2.3, 3.3, 3.2
+    odds.loc[odds.index[: len(odds) // 2], ["PSCH", "PSCD", "PSCA"]] = np.nan        # Pinnacle only half complete
+    b = backtest.odds_benchmark(pred, odds)
+    assert b["source"].startswith("market-average") and b["n"] == len(pred) and b["coverage"] == 1.0

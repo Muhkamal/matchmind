@@ -198,10 +198,10 @@ def market_picks(resp: Response, days: int = Query(7, ge=1, le=30)):
         return respond(resp, db.query_market_picks(conn, days))
 
 
-@app.get("/api/market-catalog", summary="What each market id means")
+@app.get("/api/market-catalog", summary="What each market id means, and whether the backtest showed an edge")
 def market_catalog(resp: Response):
     resp.headers["Cache-Control"] = CACHE
-    return [{"market": k, "label": v} for k, v in markets.EXTRA_MARKETS.items()]
+    return [{"market": k, "label": v, "backtest": markets.backtest_evidence(k)} for k, v in markets.EXTRA_MARKETS.items()]
 
 
 @app.get("/api/extra-market-record", summary="Graded record per extra market against the best constant forecast")

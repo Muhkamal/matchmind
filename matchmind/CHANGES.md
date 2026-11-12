@@ -75,3 +75,8 @@ Non-blocking (worker threads), pooled DB, rate limited, cached model, message ch
 - Fixed: bot fixture lookup used the database's local date; now UTC, so it cannot disagree with the UTC match date near midnight.
 
 - Backtest: private flat-stake research test against real closing prices (margin included) with a bootstrap interval. For research only; nothing about stakes or value bets is published.
+
+## v1.10.1
+- Backtest compares against the odds source with the MOST matches (it was silently using Pinnacle for only 206 of 376 matches in 2025-26) and prints the coverage.
+- Each extra market carries a backtest label (`edge` / `none`) in `/api/market-catalog`; the dashboard marks markets without an edge with an asterisk.
+- README rewritten from the real backtest, including the comparison with bookmaker prices and the flat-stake research result.

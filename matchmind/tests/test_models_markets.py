@@ -103,3 +103,8 @@ def test_matrix_markets_obey_probability_identities(fitted):
     assert em["wtn_home"] <= em["cs_home"] and em["ts3_home"] <= em["ts2_home"]
     assert em["btts_over25"] + em["btts_under25"] <= full["markets"]["p_btts"] + 1e-9
     assert em["ah_home_m1_5"] <= full["p"][0] + 1e-9
+
+
+def test_backtest_evidence_only_names_real_markets():
+    assert markets.BACKTEST_EDGE <= set(markets.EXTRA_MARKETS)
+    assert markets.backtest_evidence("dc_12") == "none" and markets.backtest_evidence("dc_1x") == "edge"

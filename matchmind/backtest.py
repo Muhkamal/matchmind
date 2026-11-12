@@ -51,29 +51,38 @@ def implied_probs(odds: np.ndarray) -> np.ndarray:
     return inv / inv.sum(axis=1, keepdims=True)
 
 
-def odds_benchmark(pred: pd.DataFrame, df: pd.DataFrame) -> dict | None:
-    """Brier / accuracy of bookmaker closing odds on exactly the matches the model scored.
-    Tries each odds source in ODDS_SETS and uses the first with usable rows."""
-    if not len(pred):
-        return None
+def _best_odds_merge(pred: pd.DataFrame, df: pd.DataFrame, min_rows: int = 50):
+    """Merge predictions with the closing-odds source that covers the MOST matches (earlier sources win ties).
+    Returns (label, trio, merged) or None."""
+    best = None
     for label, trio in ODDS_SETS:
         if not all(c in df.columns for c in trio):
             continue
-        m = pred.merge(df[["Date", "HomeTeam", "AwayTeam", *trio]],
-                       on=["Date", "HomeTeam", "AwayTeam"], how="inner").dropna(subset=list(trio))
+        m = pred.merge(df[["Date", "HomeTeam", "AwayTeam", *trio]], on=["Date", "HomeTeam", "AwayTeam"],
+                       how="inner").dropna(subset=list(trio))
         m = m[(m[list(trio)] > 1.0).all(axis=1)]
-        if len(m) < 50:
-            continue
-        p = implied_probs(m[list(trio)].to_numpy(dtype=float))
-        y_idx = np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))
-        y = np.eye(3)[y_idx]
-        mp = m[["p_home", "p_draw", "p_away"]].to_numpy()
-        return {"source": label, "n": int(len(m)),
-                "odds_acc": float((p.argmax(1) == y_idx).mean()),
-                "odds_brier": float(((p - y) ** 2).sum(1).mean()),
-                "model_acc": float((mp.argmax(1) == y_idx).mean()),
-                "model_brier": float(((mp - y) ** 2).sum(1).mean())}
-    return None
+        if len(m) >= min_rows and (best is None or len(m) > len(best[2])):
+            best = (label, trio, m)
+    return best
+
+
+def odds_benchmark(pred: pd.DataFrame, df: pd.DataFrame) -> dict | None:
+    """Brier / accuracy of bookmaker closing odds on exactly the matches the model scored."""
+    if not len(pred):
+        return None
+    found = _best_odds_merge(pred, df)
+    if not found:
+        return None
+    label, trio, m = found
+    p = implied_probs(m[list(trio)].to_numpy(dtype=float))
+    y_idx = np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))
+    y = np.eye(3)[y_idx]
+    mp = m[["p_home", "p_draw", "p_away"]].to_numpy()
+    return {"source": label, "n": int(len(m)), "coverage": float(len(m) / len(pred)),
+            "odds_acc": float((p.argmax(1) == y_idx).mean()),
+            "odds_brier": float(((p - y) ** 2).sum(1).mean()),
+            "model_acc": float((mp.argmax(1) == y_idx).mean()),
+            "model_brier": float(((mp - y) ** 2).sum(1).mean())}
 
 
 def walk_forward(df: pd.DataFrame, test_start, test_end, refit_days: int = 30) -> pd.DataFrame:
@@ -159,33 +168,28 @@ def value_research(pred: pd.DataFrame, df: pd.DataFrame, thresholds=(0.03, 0.05,
     with REAL bookmaker closing prices (margin included, as a bettor would face) have made money?
     A bet is taken on an outcome when model_prob * odds - 1 >= threshold. Profit per bet is odds-1 if it won, else -1.
     The bootstrap 95% interval on ROI says whether the result is distinguishable from luck."""
-    for label, trio in ODDS_SETS:
-        if not all(c in df.columns for c in trio):
+    found = _best_odds_merge(pred, df, min_rows=100)
+    if not found:
+        return None
+    label, trio, m = found
+    odds = m[list(trio)].to_numpy(dtype=float)
+    probs = m[["p_home", "p_draw", "p_away"]].to_numpy(dtype=float)
+    won = np.eye(3)[np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))].astype(bool)
+    profit = np.where(won, odds - 1.0, -1.0)
+    edge = probs * odds - 1.0
+    rng = np.random.default_rng(seed)
+    out = {"source": label, "matches": int(len(m)), "rows": []}
+    for t in thresholds:
+        sel = edge >= t
+        n = int(sel.sum())
+        if n < 30:
+            out["rows"].append({"threshold": t, "n": n, "roi": None, "ci_low": None, "ci_high": None})
             continue
-        m = pred.merge(df[["Date", "HomeTeam", "AwayTeam", *trio]], on=["Date", "HomeTeam", "AwayTeam"],
-                       how="inner").dropna(subset=list(trio))
-        m = m[(m[list(trio)] > 1.0).all(axis=1)]
-        if len(m) < 100:
-            continue
-        odds = m[list(trio)].to_numpy(dtype=float)
-        probs = m[["p_home", "p_draw", "p_away"]].to_numpy(dtype=float)
-        won = np.eye(3)[np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))].astype(bool)
-        profit = np.where(won, odds - 1.0, -1.0)
-        edge = probs * odds - 1.0
-        rng = np.random.default_rng(seed)
-        out = {"source": label, "matches": int(len(m)), "rows": []}
-        for t in thresholds:
-            sel = edge >= t
-            n = int(sel.sum())
-            if n < 30:
-                out["rows"].append({"threshold": t, "n": n, "roi": None, "ci_low": None, "ci_high": None})
-                continue
-            pl = profit[sel]
-            boots = pl[rng.integers(0, n, size=(n_boot, n))].mean(1)
-            out["rows"].append({"threshold": t, "n": n, "roi": float(pl.mean()),
-                                "ci_low": float(np.percentile(boots, 2.5)), "ci_high": float(np.percentile(boots, 97.5))})
-        return out
-    return None
+        pl = profit[sel]
+        boots = pl[rng.integers(0, n, size=(n_boot, n))].mean(1)
+        out["rows"].append({"threshold": t, "n": n, "roi": float(pl.mean()),
+                            "ci_low": float(np.percentile(boots, 2.5)), "ci_high": float(np.percentile(boots, 97.5))})
+    return out
 
 
 def extra_market_table(pred: pd.DataFrame) -> list[dict]:
@@ -270,7 +274,7 @@ def main(argv=None) -> int:
         b = odds_benchmark(pred, df)
         if b:
             gap = b["model_brier"] - b["odds_brier"]
-            print(f"  vs {b['source']} odds on the same {b['n']} matches (margin removed): "
+            print(f"  vs {b['source']} odds on {b['n']} of {len(pred)} matches that have them (margin removed): "
                   f"odds acc {b['odds_acc']:.3f} Brier {b['odds_brier']:.4f} | "
                   f"model acc {b['model_acc']:.3f} Brier {b['model_brier']:.4f} | "
                   f"model is {'worse' if gap > 0 else 'better'} by {abs(gap):.4f} Brier")

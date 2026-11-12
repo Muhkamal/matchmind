@@ -91,6 +91,19 @@ EXTRA_MARKETS = {
     "btts_under25": "Both teams score and under 2.5 goals",
 }
 
+# What the walk-forward backtest showed (E0, 2024-25 and 2025-26, ~750 matches; Brier vs the best constant forecast).
+# "edge" = beat the constant in BOTH full seasons. "none" = did not (or only in one season). Re-run backtest.py and
+# update this when the model or the evidence changes; the dashboard shows it next to each market.
+BACKTEST_EDGE = {
+    "dc_1x", "dc_x2", "cs_home", "cs_away", "wtn_home", "wtn_away", "ts2_home", "ts2_away", "ts3_home",
+    "ah_home_p1_5", "ah_away_p1_5", "ah_home_m1_5", "ah_away_m1_5",
+}
+
+
+def backtest_evidence(market: str) -> str:
+    return "edge" if market in BACKTEST_EDGE else "none"
+
+
 # Matrix events: (home goals h, away goals a) -> bool. One table drives both the probabilities and the Python grader.
 _EVENTS = {
     "dc_1x": lambda h, a: h >= a, "dc_x2": lambda h, a: a >= h, "dc_12": lambda h, a: h != a,

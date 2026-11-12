@@ -279,6 +279,7 @@ async function renderMoreMarkets() {
                                                get("/api/extra-market-record").catch(() => []),
                                                get("/api/market-catalog").catch(() => [])]);
   const labels = Object.fromEntries(cat.map(c => [c.market, c.label]));
+  const noEdge = id => (cat.find(c => c.market === id) || {}).backtest === "none";
   const byFx = new Map();
   picks.forEach(r => {
     const k = r.league + r.kickoff_utc + r.home_team + r.away_team;
@@ -287,7 +288,7 @@ async function renderMoreMarkets() {
   });
   const fixtures = [...byFx.values()];
   const cols = [{l: "Kickoff", f: x => fmtT(x.row.kickoff_utc)}, {l: "Match", name: 1, f: x => match(x.row)},
-    ...MORE_COLS.map(([id, lab]) => ({l: lab, num: 1, cls: "hide-sm", f: x => x.m[id] ? pct(x.m[id].probability) : "–"})),
+    ...MORE_COLS.map(([id, lab]) => ({l: lab + (noEdge(id) ? "*" : ""), num: 1, cls: "hide-sm", f: x => x.m[id] ? pct(x.m[id].probability) : "–"})),
     {l: "Likeliest score", num: 1, f: x => x.m.score_top1 ? `${esc(x.m.score_top1.selection)} (${pct(x.m.score_top1.probability)})` : "–"},
     {l: "In top 5", num: 1, cls: "hide-sm", f: x => x.m.score_top5 ? pct(x.m.score_top5.probability) : "–"}];
   const core = new Set(MORE_COLS.map(c => c[0]).concat(["score_top1", "score_top5"]));
@@ -295,12 +296,13 @@ async function renderMoreMarkets() {
     const rest = Object.values(x.m).filter(r => !core.has(r.market));
     if (!rest.length) return "";
     return `<details class="explain"><summary>All markets: ${match(x.row)}</summary><dl class="mkt-grid">` +
-      rest.map(r => `<div><dt>${esc(labels[r.market] || r.market)}</dt><dd>${pct(r.probability)}</dd></div>`).join("") +
+      rest.map(r => `<div><dt>${esc(labels[r.market] || r.market)}${noEdge(r.market) ? " *" : ""}</dt><dd>${pct(r.probability)}</dd></div>`).join("") +
       `</dl></details>`;
   }).join("");
   document.getElementById("more-picks").innerHTML =
-    table(cols, fixtures, "No extra-market picks for open fixtures yet. They appear after the nightly run.") + detail;
-  const label = id => labels[id] || ((MORE_COLS.find(c => c[0] === id) || [id, id])[1]);
+    table(cols, fixtures, "No extra-market picks for open fixtures yet. They appear after the nightly run.") + detail +
+    (fixtures.length ? `<p class="note">* Showed no edge over the plain base rate in the backtest (two full seasons), so treat it as a base-rate estimate, not a model skill.</p>` : "");
+  const label = id => (labels[id] || ((MORE_COLS.find(c => c[0] === id) || [id, id])[1])) + (noEdge(id) ? " *" : "");
   document.getElementById("more-record").innerHTML = rec.length ? table([
     {l: "Market", name: 1, f: r => esc(label(r.market))}, {l: "n", num: 1, f: r => r.n},
     {l: "Predicted", num: 1, f: r => pct(r.avg_predicted, 1)}, {l: "Happened", num: 1, f: r => pct(r.actual_rate, 1)},
