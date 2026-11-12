@@ -16,7 +16,10 @@ DROP VIEW IF EXISTS public.v_leaderboard, public.v_team_profiles, public.v_marke
                     public.v_pending_settlement CASCADE;
 
 -- Ledger triggers refuse DELETE/TRUNCATE; DROP TABLE is not blocked by them.
-DROP TABLE IF EXISTS public.arena_settlements, public.arena_predictions, public.arena_users,
+DROP VIEW IF EXISTS public.v_extra_market_record;
+DROP TABLE IF EXISTS public.market_outcomes, public.market_predictions;
+DROP FUNCTION IF EXISTS public.market_predictions_lock();
+DROP TABLE IF EXISTS public.job_runs, public.arena_settlements, public.arena_predictions, public.arena_users,
                      public.market_settlements, public.settlements, public.predictions,
                      public.weekly_reports, public.results, public.model_versions CASCADE;
 DROP FUNCTION IF EXISTS public.ledger_immutable() CASCADE;

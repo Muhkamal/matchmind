@@ -66,3 +66,40 @@ def test_version_id_changes_with_params(fitted):
         assert nightly.version_id_for(model, "E0") != a
     finally:
         models.EnsembleV1.PARAMS.clear(); models.EnsembleV1.PARAMS.update(old)
+
+
+def test_extra_markets_are_consistent_with_1x2(fitted):
+    model, _ = fitted
+    full = model.predict_full("arsenal", "chelsea")
+    em = {m: (sel, p) for m, _, sel, p in markets.extra_markets(full["matrix"], full["p"])}
+    assert set(em) == set(markets.EXTRA_MARKETS)
+    p = full["p"]
+    assert abs(em["dc_1x"][1] - (p[0] + p[1])) < 1e-9 and abs(em["dc_12"][1] - (p[0] + p[2])) < 1e-9
+    assert abs(em["dc_1x"][1] + em["dc_x2"][1] + em["dc_12"][1] - 2) < 1e-9     # each result counted twice
+    assert em["over_3_5"][1] <= full["markets"]["p_over25"] <= em["over_1_5"][1]
+    assert em["score_top1"][1] <= em["score_top5"][1] <= 1
+    assert len(em["score_top5"][0].split(",")) == 5
+    assert all(0 <= v[1] <= 1 for v in em.values())
+
+
+def test_extra_outcome_rules_and_unknown_market():
+    assert markets.extra_outcome("dc_1x", None, 1, 1) is True
+    assert markets.extra_outcome("dc_x2", None, 2, 1) is False
+    assert markets.extra_outcome("over_1_5", None, 1, 0) is False and markets.extra_outcome("over_3_5", None, 2, 2)
+    assert markets.extra_outcome("cs_home", None, 2, 0) and not markets.extra_outcome("cs_away", None, 2, 0)
+    assert markets.extra_outcome("score_top5", "1-1,2-1", 2, 1) is True
+    assert markets.extra_outcome("score_top1", "1-1", 2, 1) is False
+    assert markets.extra_outcome("player_anytime_scorer", None, 2, 1) is None     # unknown: never guessed
+
+
+def test_matrix_markets_obey_probability_identities(fitted):
+    model, _ = fitted
+    full = model.predict_full("everton", "fulham")
+    em = {m: p for m, _, _, p in markets.extra_markets(full["matrix"], full["p"])}
+    assert abs(em["tg_0_1"] + em["tg_2_3"] + em["tg_4_5"] + em["tg_6p"] - 1) < 1e-3       # bands cover every total
+    assert abs(em["ah_home_p1_5"] + em["ah_away_m1_5"] - 1) < 1e-9                        # exact complements
+    assert abs(em["ah_away_p1_5"] + em["ah_home_m1_5"] - 1) < 1e-9
+    assert em["wtn_home"] <= full["p"][0] + 1e-9 and em["wtn_away"] <= full["p"][2] + 1e-9  # a win to nil is a win
+    assert em["wtn_home"] <= em["cs_home"] and em["ts3_home"] <= em["ts2_home"]
+    assert em["btts_over25"] + em["btts_under25"] <= full["markets"]["p_btts"] + 1e-9
+    assert em["ah_home_m1_5"] <= full["p"][0] + 1e-9

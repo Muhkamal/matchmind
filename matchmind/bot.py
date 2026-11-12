@@ -98,7 +98,8 @@ async def cmd_start(update, ctx):
 async def cmd_picks(update, ctx):
     def q(conn):
         return fetch_df(conn, """
-            SELECT kickoff_utc, home_team, away_team, p_home, p_draw, p_away, confidence_band
+            SELECT kickoff_utc, home_team, away_team, p_home, p_draw, p_away, confidence_band,
+                   p_over25, p_btts
             FROM predictions WHERE provenance='live' AND kickoff_utc > now()
               AND kickoff_utc < now() + interval '4 days' ORDER BY kickoff_utc LIMIT 30""")
     df = await asyncio.to_thread(db, q)
@@ -110,6 +111,9 @@ async def cmd_picks(update, ctx):
         when = r.kickoff_utc.strftime("%a %H:%M UTC")
         lines.append(f"{when}  {teams.pretty_fixture(r.home_team, r.away_team)}\n"
                      f"   H {bl.pct(r.p_home)} · D {bl.pct(r.p_draw)} · A {bl.pct(r.p_away)}  [{r.confidence_band}]")
+        if r.p_over25 == r.p_over25 and r.p_over25 is not None:     # not NaN / null
+            lines.append(f"   Over/Under 2.5: {bl.pct(r.p_over25)}/{bl.pct(1 - r.p_over25)} · "
+                         f"BTTS Yes/No: {bl.pct(r.p_btts)}/{bl.pct(1 - r.p_btts)} (experimental)")
     await reply(update, "\n".join(lines))
 
 
@@ -259,7 +263,16 @@ def main() -> None:
         app.add_handler(CommandHandler(name, fn))
     app.add_error_handler(on_error)
     try:
-        app.run_polling()
+        base = os.environ.get("WEBHOOK_BASE_URL", "").rstrip("/")
+        if base:
+            # Free-tier mode: Telegram pushes updates to us; the host may sleep between messages
+            # and Telegram retries delivery when it wakes. The secret path stops strangers posting fake updates.
+            secret = os.environ["WEBHOOK_SECRET"]
+            app.run_webhook(listen="0.0.0.0", port=int(os.environ.get("PORT", "10000")),
+                            url_path=secret, webhook_url=f"{base}/{secret}",
+                            secret_token=secret, drop_pending_updates=False)
+        else:
+            app.run_polling()
     finally:
         close_pools()
 

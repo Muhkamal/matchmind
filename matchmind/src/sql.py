@@ -71,6 +71,61 @@ VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 ON CONFLICT DO NOTHING
 """  # first live pick per fixture wins (unique index) -- later refits never add a second row
 
+INSERT_PREDICTION_RETURNING = INSERT_PREDICTION.rstrip() + " RETURNING prediction_id"
+# RETURNING gives a row only when this run inserted the pick; an existing (earlier, locked) pick returns nothing, so
+# its extra markets are never added later from a different refit.
+
+INSERT_MARKET_PREDICTION = """
+INSERT INTO market_predictions (prediction_id, market, subject, selection, probability)
+VALUES (%s,%s,%s,%s,%s)
+ON CONFLICT (prediction_id, market, subject) DO NOTHING
+"""
+
+# Grade every stored extra market whose match has a result. Unknown markets stay ungraded (outcome IS NULL).
+SETTLE_EXTRA_MARKETS = """
+WITH graded AS (
+    SELECT mp.market_pred_id, mp.probability,
+           CASE mp.market
+               WHEN 'dc_1x'         THEN r.home_goals >= r.away_goals
+               WHEN 'dc_x2'         THEN r.away_goals >= r.home_goals
+               WHEN 'dc_12'         THEN r.home_goals <> r.away_goals
+               WHEN 'over_1_5'      THEN r.home_goals + r.away_goals >= 2
+               WHEN 'over_3_5'      THEN r.home_goals + r.away_goals >= 4
+               WHEN 'cs_home'       THEN r.away_goals = 0
+               WHEN 'cs_away'       THEN r.home_goals = 0
+               WHEN 'ah_home_p1_5'  THEN r.away_goals - r.home_goals <= 1
+               WHEN 'ah_away_p1_5'  THEN r.home_goals - r.away_goals <= 1
+               WHEN 'ah_home_m1_5'  THEN r.home_goals - r.away_goals >= 2
+               WHEN 'ah_away_m1_5'  THEN r.away_goals - r.home_goals >= 2
+               WHEN 'wtn_home'      THEN r.home_goals > r.away_goals AND r.away_goals = 0
+               WHEN 'wtn_away'      THEN r.away_goals > r.home_goals AND r.home_goals = 0
+               WHEN 'tg_0_1'        THEN r.home_goals + r.away_goals <= 1
+               WHEN 'tg_2_3'        THEN r.home_goals + r.away_goals BETWEEN 2 AND 3
+               WHEN 'tg_4_5'        THEN r.home_goals + r.away_goals BETWEEN 4 AND 5
+               WHEN 'tg_6p'         THEN r.home_goals + r.away_goals >= 6
+               WHEN 'ts2_home'      THEN r.home_goals >= 2
+               WHEN 'ts2_away'      THEN r.away_goals >= 2
+               WHEN 'ts3_home'      THEN r.home_goals >= 3
+               WHEN 'ts3_away'      THEN r.away_goals >= 3
+               WHEN 'btts_over25'   THEN r.home_goals > 0 AND r.away_goals > 0 AND r.home_goals + r.away_goals >= 3
+               WHEN 'btts_under25'  THEN r.home_goals > 0 AND r.away_goals > 0 AND r.home_goals + r.away_goals <= 2
+               WHEN 'score_top1'    THEN (r.home_goals::text || '-' || r.away_goals::text) = mp.selection
+               WHEN 'score_top5'    THEN (r.home_goals::text || '-' || r.away_goals::text)
+                                         = ANY (string_to_array(mp.selection, ','))
+           END AS outcome
+    FROM market_predictions mp
+    JOIN predictions p ON p.prediction_id = mp.prediction_id
+    JOIN results r ON (r.league, r.match_date, r.home_team, r.away_team)
+                    = (p.league, p.match_date, p.home_team, p.away_team)
+    LEFT JOIN market_outcomes mo ON mo.market_pred_id = mp.market_pred_id
+    WHERE mo.market_pred_id IS NULL
+)
+INSERT INTO market_outcomes (market_pred_id, outcome, brier)
+SELECT market_pred_id, outcome, POWER(probability - CASE WHEN outcome THEN 1 ELSE 0 END, 2)
+FROM graded WHERE outcome IS NOT NULL
+ON CONFLICT (market_pred_id) DO NOTHING;
+"""
+
 INSERT_RESULT = """
 INSERT INTO results (league, match_date, home_team, away_team, home_goals, away_goals, result)
 VALUES (%s,%s,%s,%s,%s,%s,%s)

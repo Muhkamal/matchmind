@@ -5,7 +5,7 @@ Order matters. Do each step once.
 ## 1. Supabase database
 1. supabase.com > New project. Save the database password.
 2. SQL Editor: run these files **in this order**, one at a time:
-   `schema.sql`, `migration-2026-11-04.sql`, `migration-2026-11-05.sql`, `migration-2026-11-06.sql`.
+   `schema.sql`, `migration-2026-11-04.sql`, `migration-2026-11-05.sql`, `migration-2026-11-06.sql`, `migration-2026-11-09.sql` (run log for the freshness line on the dashboard), `migration-2026-11-10.sql` (probability sanity checks), `migration-2026-11-11.sql` (extra-markets ledger: double chance, goal lines, clean sheets, scores).
    - `migration-2026-11-06.sql` refuses to run if the old arena already holds data or if there are duplicate live picks for a fixture. If it stops, read the message: it tells you what to fix.
 3. Set passwords for the two limited roles the migration created (pick long random ones, run in the SQL editor):
    ```sql

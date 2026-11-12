@@ -4,7 +4,7 @@ import pandas as pd
 import psycopg
 
 import nightly
-from src import ingest, models
+from src import markets, ingest, models
 from tests.synth import make_history
 
 UTC = dt.timezone.utc
@@ -66,7 +66,9 @@ def test_end_to_end_nightly(clean_db, monkeypatch, tmp_path):
         assert rep2.appended == 0
         n = conn.execute("SELECT count(*) FROM predictions").fetchone()[0]
         assert n == 2
-        assert nightly.settle(conn) == {"1x2": 0, "markets": 0, "arena": 0}
+        # every newly locked pick carries all extra markets; the second run must not add more
+        assert conn.execute("SELECT count(*) FROM market_predictions").fetchone()[0] == 2 * len(markets.EXTRA_MARKETS)
+        assert nightly.settle(conn) == {"1x2": 0, "markets": 0, "extra": 0, "arena": 0}
 
 
 def test_unmapped_and_thin_history_make_run_fail(clean_db, monkeypatch, tmp_path):
@@ -107,3 +109,19 @@ def test_backfill_403_is_a_plan_limit_not_a_failure(monkeypatch, capsys):
     monkeypatch.setattr(backfill.ingest, "fetch_football_data_org", boom)
     total, problems = backfill.backfill_league(None, "k", "E0", [2021])
     assert total == 0 and problems == [] and "plan" in capsys.readouterr().out
+
+
+def test_log_runs_writes_one_row_per_league_and_never_raises(pg_uri):
+    import psycopg
+    import nightly
+    with psycopg.connect(pg_uri) as conn:
+        ok = nightly.LeagueReport("E0"); ok.fixtures_seen = 5
+        bad = nightly.LeagueReport("SP1"); bad.issues.append("boom")
+        before = conn.execute("SELECT count(*) FROM job_runs").fetchone()[0]
+        nightly.log_runs(conn, [ok, bad], 3)
+        rows = conn.execute("SELECT league, ok, issues FROM job_runs ORDER BY run_id DESC LIMIT 2").fetchall()
+        assert conn.execute("SELECT count(*) FROM job_runs").fetchone()[0] == before + 2
+        assert {(r[0], r[1]) for r in rows} == {("E0", True), ("SP1", False)}
+        conn.execute("DROP TABLE job_runs CASCADE")        # missing table must not crash the job
+        nightly.log_runs(conn, [ok], 0)
+        conn.rollback()

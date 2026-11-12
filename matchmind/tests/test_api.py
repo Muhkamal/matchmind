@@ -25,7 +25,7 @@ def client(pg_uri, monkeypatch):
     monkeypatch.setattr(db, "connection", fake)
     with psycopg.connect(pg_uri, autocommit=True) as c:
         c.execute("SET session_replication_role = replica")   # skip immutability triggers: test cleanup only
-        c.execute("DELETE FROM market_settlements; DELETE FROM settlements; DELETE FROM predictions;"
+        c.execute("DELETE FROM market_outcomes; DELETE FROM market_predictions; DELETE FROM market_settlements; DELETE FROM settlements; DELETE FROM predictions;"
                   "DELETE FROM results; DELETE FROM arena_settlements; DELETE FROM arena_predictions;"
                   "DELETE FROM arena_users")
     return TestClient(main.app)
@@ -87,3 +87,55 @@ def test_pages_served(client):
     dash = client.get("/dashboard")
     assert land.status_code == 200 and "audit" in land.text
     assert dash.status_code == 200 and "Upcoming picks" in dash.text
+
+
+def test_status_freshness_and_cors(client, pg_uri):
+    _seed(pg_uri)
+    s = client.get("/api/status", headers={"Origin": "https://example.org"})
+    assert s.headers["access-control-allow-origin"] == "*"
+    f = s.json()["freshness"]
+    assert f["last_run"] is None                         # no job_runs rows yet: say so, never invent one
+    assert f["open_picks"] == 1 and f["next_kickoff_utc"] and f["last_prediction_at"]
+    assert f["models"][0]["version_id"] == "v-api" and f["next_scheduled_run_utc"]
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute("INSERT INTO job_runs (league, ok, fixtures_seen, predictions_appended) VALUES ('E0', true, 5, 0)")
+    run = client.get("/api/status").json()["freshness"]["last_run"]
+    assert run["ok"] is True and run["fixtures_seen"] == 5 and run["issues"] is None
+
+
+def test_next_scheduled_run_rolls_to_tomorrow():
+    import datetime as dt
+    from api.main import next_scheduled_run
+    before = dt.datetime(2026, 11, 9, 20, 0, tzinfo=dt.timezone.utc)
+    after = dt.datetime(2026, 11, 9, 23, 30, tzinfo=dt.timezone.utc)
+    assert next_scheduled_run(before).startswith("2026-11-09T22:55")
+    assert next_scheduled_run(after).startswith("2026-11-10T22:55")
+
+
+def test_export_csv_and_openapi_docs(client, pg_uri):
+    import hashlib
+    _seed(pg_uri)
+    r = client.get("/api/export/predictions.csv")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert r.headers["x-content-sha256"] == hashlib.sha256(r.content).hexdigest()
+    lines = r.text.strip().splitlines()
+    assert len(lines) == 3 and "model_version" in lines[0] and "brier_contrib" in lines[0]
+    assert "v-api" in lines[1]
+    spec = client.get("/openapi.json").json()
+    assert "UTC" in spec["info"]["description"] and "null" in spec["info"]["description"]
+    assert "example" in spec["paths"]["/api/upcoming"]["get"]["responses"]["200"]["content"]["application/json"]
+
+
+def test_extra_market_endpoints(client, pg_uri):
+    import psycopg
+    from src import sql
+    _seed(pg_uri)
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        pid = c.execute("SELECT prediction_id FROM predictions WHERE home_team='man-city'").fetchone()[0]
+        c.execute(sql.INSERT_MARKET_PREDICTION, (pid, "dc_1x", "", None, 0.8))
+        c.execute(sql.INSERT_MARKET_PREDICTION, (pid, "score_top1", "", "2-1", 0.11))
+    rows = client.get("/api/market-picks").json()
+    assert {r["market"] for r in rows} == {"dc_1x", "score_top1"} and rows[0]["home_team_name"]
+    cat = {r["market"] for r in client.get("/api/market-catalog").json()}
+    assert "over_3_5" in cat and "cs_home" in cat
+    assert client.get("/api/extra-market-record").json() == []            # nothing graded yet: no invented record

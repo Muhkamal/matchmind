@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 MIGRATIONS = ["schema.sql", "migration-2026-11-04.sql", "migration-2026-11-05.sql",
-              "migration-2026-11-06.sql"]
+              "migration-2026-11-06.sql", "migration-2026-11-09.sql", "migration-2026-11-10.sql", "migration-2026-11-11.sql"]
 
 
 def _server_uri():
@@ -59,7 +59,7 @@ def clean_db(pg_uri):
     import psycopg
     with psycopg.connect(pg_uri, autocommit=True) as c:
         c.execute("SET session_replication_role = replica")
-        c.execute("DELETE FROM market_settlements; DELETE FROM settlements; "
+        c.execute("DELETE FROM market_outcomes; DELETE FROM market_predictions; DELETE FROM market_settlements; DELETE FROM settlements; "
                   "DELETE FROM arena_settlements; DELETE FROM arena_predictions; "
                   "DELETE FROM arena_users; DELETE FROM predictions; DELETE FROM results; "
                   "DELETE FROM model_versions")

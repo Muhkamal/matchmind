@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src import models, teams  # noqa: E402
+from src import markets, models, teams  # noqa: E402
 
 CLASSES = ("H", "D", "A")
 
@@ -32,9 +32,48 @@ def load_history(path: Path) -> pd.DataFrame:
     df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, format="mixed")
     df["HomeTeam"] = df["HomeTeam"].map(lambda s: teams.canon(s, "csv"))
     df["AwayTeam"] = df["AwayTeam"].map(lambda s: teams.canon(s, "csv"))
-    out = df[["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]].dropna()
+    cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
+    odds_cols = [c for trio in ODDS_SETS for c in trio[1] if c in df.columns]
+    out = df[cols + odds_cols].dropna(subset=cols)
     out[["FTHG", "FTAG"]] = out[["FTHG", "FTAG"]].astype(int)
     return out.sort_values("Date").reset_index(drop=True)
+
+
+# Closing odds are the sharpest public benchmark; used for comparison ONLY, never as a model input.
+ODDS_SETS = (("Pinnacle closing", ("PSCH", "PSCD", "PSCA")),
+             ("market-average closing", ("AvgCH", "AvgCD", "AvgCA")),
+             ("Bet365 closing", ("B365CH", "B365CD", "B365CA")))
+
+
+def implied_probs(odds: np.ndarray) -> np.ndarray:
+    """Decimal odds -> probabilities with the bookmaker margin removed (proportional normalisation)."""
+    inv = 1.0 / odds
+    return inv / inv.sum(axis=1, keepdims=True)
+
+
+def odds_benchmark(pred: pd.DataFrame, df: pd.DataFrame) -> dict | None:
+    """Brier / accuracy of bookmaker closing odds on exactly the matches the model scored.
+    Tries each odds source in ODDS_SETS and uses the first with usable rows."""
+    if not len(pred):
+        return None
+    for label, trio in ODDS_SETS:
+        if not all(c in df.columns for c in trio):
+            continue
+        m = pred.merge(df[["Date", "HomeTeam", "AwayTeam", *trio]],
+                       on=["Date", "HomeTeam", "AwayTeam"], how="inner").dropna(subset=list(trio))
+        m = m[(m[list(trio)] > 1.0).all(axis=1)]
+        if len(m) < 50:
+            continue
+        p = implied_probs(m[list(trio)].to_numpy(dtype=float))
+        y_idx = np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))
+        y = np.eye(3)[y_idx]
+        mp = m[["p_home", "p_draw", "p_away"]].to_numpy()
+        return {"source": label, "n": int(len(m)),
+                "odds_acc": float((p.argmax(1) == y_idx).mean()),
+                "odds_brier": float(((p - y) ** 2).sum(1).mean()),
+                "model_acc": float((mp.argmax(1) == y_idx).mean()),
+                "model_brier": float(((mp - y) ** 2).sum(1).mean())}
+    return None
 
 
 def walk_forward(df: pd.DataFrame, test_start, test_end, refit_days: int = 30) -> pd.DataFrame:
@@ -51,8 +90,14 @@ def walk_forward(df: pd.DataFrame, test_start, test_end, refit_days: int = 30) -
                 if not (model.knows(r.HomeTeam) and model.knows(r.AwayTeam)):
                     continue    # promoted club with no history: production skips these too
                 full = model.predict_full(r.HomeTeam, r.AwayTeam)
-                rows.append({"Date": r.Date, "p_home": full["p"][0], "p_draw": full["p"][1],
-                             "p_away": full["p"][2], "p_over25": full["markets"]["p_over25"],
+                extras = {}
+                for mkt, _, sel, prob in markets.extra_markets(full["matrix"], full["p"]):
+                    extras[f"x_{mkt}"], extras[f"xs_{mkt}"] = prob, sel
+                rows.append({**extras, "Date": r.Date, "HomeTeam": r.HomeTeam, "AwayTeam": r.AwayTeam,
+                             "p_home": full["p"][0], "p_draw": full["p"][1],
+                             "p_away": full["p"][2],
+                             "elo_h": full["p_elo"][0], "elo_d": full["p_elo"][1], "elo_a": full["p_elo"][2],
+                             "dc_h": full["p_dc"][0], "dc_d": full["p_dc"][1], "dc_a": full["p_dc"][2], "p_over25": full["markets"]["p_over25"],
                              "p_btts": full["markets"]["p_btts"], "FTHG": r.FTHG, "FTAG": r.FTAG,
                              "base_h": float((train.FTHG > train.FTAG).mean()),
                              "base_d": float((train.FTHG == train.FTAG).mean()),
@@ -83,6 +128,80 @@ def summarize(pred: pd.DataFrame) -> dict:
         "brier_btts": float(((pred.p_btts - btts) ** 2).mean()),
         "brier_btts_base": float(((pred.base_btts - btts) ** 2).mean()),
     }
+
+
+def _brier_rows(p: np.ndarray, y: np.ndarray) -> np.ndarray:
+    return ((p - y) ** 2).sum(1)
+
+
+def component_and_ci(pred: pd.DataFrame, n_boot: int = 2000, seed: int = 7) -> dict:
+    """Elo-only and Dixon-Coles-only Brier on the same matches, and a paired bootstrap 95% interval for
+    (ensemble Brier - base-rate Brier). If the interval is entirely below 0 the edge is unlikely to be luck;
+    if it straddles 0 the sample cannot tell the model from the baseline."""
+    y_idx = np.where(pred.FTHG > pred.FTAG, 0, np.where(pred.FTHG == pred.FTAG, 1, 2))
+    y = np.eye(3)[y_idx]
+    ens = _brier_rows(pred[["p_home", "p_draw", "p_away"]].to_numpy(), y)
+    base = _brier_rows(np.column_stack([pred.base_h, pred.base_d, 1 - pred.base_h - pred.base_d]), y)
+    diff = ens - base
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(diff), size=(n_boot, len(diff)))
+    boots = diff[idx].mean(1)
+    out = {"diff": float(diff.mean()), "ci_low": float(np.percentile(boots, 2.5)),
+           "ci_high": float(np.percentile(boots, 97.5))}
+    for tag, cols in (("elo", ("elo_h", "elo_d", "elo_a")), ("dc", ("dc_h", "dc_d", "dc_a"))):
+        out[f"brier_{tag}"] = float(_brier_rows(pred[list(cols)].to_numpy(), y).mean())
+    return out
+
+
+def value_research(pred: pd.DataFrame, df: pd.DataFrame, thresholds=(0.03, 0.05, 0.10),
+                   n_boot: int = 2000, seed: int = 11) -> dict | None:
+    """PRIVATE RESEARCH, not advice and never published. Would flat 1-unit bets on the model's biggest disagreements
+    with REAL bookmaker closing prices (margin included, as a bettor would face) have made money?
+    A bet is taken on an outcome when model_prob * odds - 1 >= threshold. Profit per bet is odds-1 if it won, else -1.
+    The bootstrap 95% interval on ROI says whether the result is distinguishable from luck."""
+    for label, trio in ODDS_SETS:
+        if not all(c in df.columns for c in trio):
+            continue
+        m = pred.merge(df[["Date", "HomeTeam", "AwayTeam", *trio]], on=["Date", "HomeTeam", "AwayTeam"],
+                       how="inner").dropna(subset=list(trio))
+        m = m[(m[list(trio)] > 1.0).all(axis=1)]
+        if len(m) < 100:
+            continue
+        odds = m[list(trio)].to_numpy(dtype=float)
+        probs = m[["p_home", "p_draw", "p_away"]].to_numpy(dtype=float)
+        won = np.eye(3)[np.where(m.FTHG > m.FTAG, 0, np.where(m.FTHG == m.FTAG, 1, 2))].astype(bool)
+        profit = np.where(won, odds - 1.0, -1.0)
+        edge = probs * odds - 1.0
+        rng = np.random.default_rng(seed)
+        out = {"source": label, "matches": int(len(m)), "rows": []}
+        for t in thresholds:
+            sel = edge >= t
+            n = int(sel.sum())
+            if n < 30:
+                out["rows"].append({"threshold": t, "n": n, "roi": None, "ci_low": None, "ci_high": None})
+                continue
+            pl = profit[sel]
+            boots = pl[rng.integers(0, n, size=(n_boot, n))].mean(1)
+            out["rows"].append({"threshold": t, "n": n, "roi": float(pl.mean()),
+                                "ci_low": float(np.percentile(boots, 2.5)), "ci_high": float(np.percentile(boots, 97.5))})
+        return out
+    return None
+
+
+def extra_market_table(pred: pd.DataFrame) -> list[dict]:
+    """Per extra market: Brier vs the best constant forecast (always predict the rate that actually occurred).
+    That baseline is strict (it peeks at the test rate), so 'beats' here is a fair claim."""
+    out = []
+    for mkt in markets.EXTRA_MARKETS:
+        if f"x_{mkt}" not in pred.columns:
+            continue
+        hit = np.array([bool(markets.extra_outcome(mkt, sel if isinstance(sel, str) else None, int(h), int(a)))
+                        for sel, h, a in zip(pred[f"xs_{mkt}"], pred.FTHG, pred.FTAG)], dtype=float)
+        p = pred[f"x_{mkt}"].to_numpy(dtype=float)
+        rate = float(hit.mean())
+        out.append({"market": mkt, "n": int(len(hit)), "rate": rate, "pred": float(p.mean()),
+                    "brier": float(((p - hit) ** 2).mean()), "constant": rate * (1 - rate)})
+    return out
 
 
 def verdict(s: dict) -> str:
@@ -124,6 +243,39 @@ def main(argv=None) -> int:
               f"  O2.5  Brier {s['brier_over25']:.4f} (base {s['brier_over25_base']:.4f})\n"
               f"  BTTS  Brier {s['brier_btts']:.4f} (base {s['brier_btts_base']:.4f})\n"
               f"  {verdict(s)}")
+        print("  extra markets (Brier vs best constant forecast; lower is better):")
+        for e in extra_market_table(pred):
+            tag = "beats constant" if e["brier"] < e["constant"] else "does NOT beat constant"
+            print(f"    {e['market']:<11} n={e['n']}  predicted {e['pred']:.3f} happened {e['rate']:.3f}  "
+                  f"Brier {e['brier']:.4f} vs {e['constant']:.4f}  {tag}")
+        vr = value_research(pred, df)
+        if vr:
+            print(f"  PRIVATE research (not advice): flat bets where model edge >= threshold, {vr['source']} prices "
+                  f"(margin included), {vr['matches']} matches")
+            for r in vr["rows"]:
+                if r["roi"] is None:
+                    print(f"    edge >= {r['threshold']:.0%}: {r['n']} bets, too few to judge")
+                else:
+                    sig = ("profit unlikely to be luck" if r["ci_low"] > 0 else
+                           "loss unlikely to be luck" if r["ci_high"] < 0 else "cannot be told from luck")
+                    print(f"    edge >= {r['threshold']:.0%}: {r['n']} bets, ROI {r['roi']:+.1%} "
+                          f"(95% {r['ci_low']:+.1%} to {r['ci_high']:+.1%}): {sig}")
+        c = component_and_ci(pred)
+        print(f"  parts: Elo only {c['brier_elo']:.4f} | Dixon-Coles only {c['brier_dc']:.4f} | "
+              f"ensemble {s['brier_1x2']:.4f}")
+        sig = ("the edge over base rates is unlikely to be luck" if c["ci_high"] < 0 else
+               "the sample cannot separate the model from the base rate")
+        print(f"  ensemble minus base-rate Brier {c['diff']:+.4f}, 95% interval "
+              f"[{c['ci_low']:+.4f}, {c['ci_high']:+.4f}]: {sig}")
+        b = odds_benchmark(pred, df)
+        if b:
+            gap = b["model_brier"] - b["odds_brier"]
+            print(f"  vs {b['source']} odds on the same {b['n']} matches (margin removed): "
+                  f"odds acc {b['odds_acc']:.3f} Brier {b['odds_brier']:.4f} | "
+                  f"model acc {b['model_acc']:.3f} Brier {b['model_brier']:.4f} | "
+                  f"model is {'worse' if gap > 0 else 'better'} by {abs(gap):.4f} Brier")
+        else:
+            print("  (no usable bookmaker odds columns in this file for this season)")
     return 0
 
 

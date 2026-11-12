@@ -41,17 +41,23 @@ class FdoResult:
     skipped_matches: int = 0                              # matches dropped for any reason
 
 
-def _get_json(url: str, headers: dict, timeout: float = 30.0, retry_wait: float = 65.0):
-    """GET JSON; one polite retry on HTTP 429 (free tier is 10 requests/minute)."""
-    for attempt in (1, 2):
+def _get_json(url: str, headers: dict, timeout: float = 30.0, retry_wait: float = 65.0,
+              transient_wait: float = 5.0, attempts: int = 4):
+    """GET JSON. Retries rate limits (HTTP 429, free tier is 10 requests/minute) and transient failures
+    (timeouts, connection errors, HTTP 5xx) with a growing pause. Real errors (401, 403, 404) fail at once.
+    Retrying is safe: the ledger's unique index means a repeated run can never create a duplicate pick."""
+    for attempt in range(1, attempts + 1):
         req = urllib.request.Request(url, headers=headers)
         try:
             return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
         except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt == 1:
-                time.sleep(retry_wait)
-                continue
-            raise
+            if attempt == attempts or not (e.code == 429 or e.code >= 500):
+                raise
+            time.sleep(retry_wait if e.code == 429 else transient_wait * attempt)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts:
+                raise
+            time.sleep(transient_wait * attempt)
 
 
 def fetch_football_data_org(api_key: str, league_code: str, date_from: str, date_to: str,

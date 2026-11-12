@@ -101,3 +101,25 @@ def test_report_live_only_and_date_types(kind):
 def test_report_empty_week():
     pred, st, res = _frames("ts")
     assert "No live predictions settled" in report.weekly_report(pred, st, res, "E0", pd.Timestamp("2026-12-07"))
+
+
+def test_get_json_retries_transient_errors_but_not_real_ones(monkeypatch):
+    import io, urllib.error
+    from src import ingest
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
+    calls = []
+
+    def flaky(req, timeout=None):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.URLError("temporary")
+        return io.BytesIO(b'{"ok": 1}')
+    monkeypatch.setattr(ingest.urllib.request, "urlopen", flaky)
+    assert ingest._get_json("http://x", {}) == {"ok": 1} and len(calls) == 3
+
+    def forbidden(req, timeout=None):
+        raise urllib.error.HTTPError("http://x", 403, "no", {}, None)
+    monkeypatch.setattr(ingest.urllib.request, "urlopen", forbidden)
+    import pytest
+    with pytest.raises(urllib.error.HTTPError):
+        ingest._get_json("http://x", {})

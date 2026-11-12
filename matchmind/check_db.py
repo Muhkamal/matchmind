@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LEDGER_TABLES = ["predictions", "settlements", "results", "market_settlements"]
+LEDGER_TABLES = ["predictions", "settlements", "results", "market_settlements",
+                 "market_predictions", "market_outcomes"]
 ARENA_TABLES = ["arena_users", "arena_predictions", "arena_settlements"]
 NEEDED_COLUMNS = {
     "predictions": ["kickoff_utc", "p_over25", "p_btts", "top_scorelines", "provenance", "created_at"],
@@ -42,7 +43,7 @@ def run_checks(conn) -> list[tuple[str, bool, str]]:
 
     tables = {r[0] for r in conn.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public'")}
-    for t in ["model_versions", *LEDGER_TABLES, *ARENA_TABLES]:
+    for t in ["model_versions", "job_runs", *LEDGER_TABLES, *ARENA_TABLES]:
         check(f"table {t} exists", t in tables, MIGRATE_HINT)
     cols: dict[str, set] = {}
     for t, c in conn.execute("SELECT table_name, column_name FROM information_schema.columns "

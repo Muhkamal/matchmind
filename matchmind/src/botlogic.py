@@ -153,7 +153,7 @@ def find_live_fixture(conn, home: str, away: str):
     Returns (prediction_id, league, match_date, kickoff_utc)."""
     return conn.execute(
         "SELECT prediction_id, league, match_date, kickoff_utc FROM predictions "
-        "WHERE provenance='live' AND home_team=%s AND away_team=%s AND match_date >= CURRENT_DATE "
+        "WHERE provenance='live' AND home_team=%s AND away_team=%s AND match_date >= (now() AT TIME ZONE 'UTC')::date "
         "ORDER BY match_date LIMIT 1", (home, away)).fetchone()
 
 

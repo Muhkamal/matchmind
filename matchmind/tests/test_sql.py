@@ -156,3 +156,73 @@ def test_views_query(conn):
     for v in ("v_model_record", "v_model_record_by_version", "v_calibration", "v_market_record",
               "v_team_profiles"):
         conn.execute(f"SELECT * FROM {v}").fetchall()
+
+
+def test_database_rejects_impossible_probabilities(pg_uri):
+    import datetime as dt
+    import psycopg
+    import pytest
+    from src import sql
+    fut = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute(sql.INSERT_MODEL_VERSION, ("v-prob", "E0", dt.date(2026, 1, 1), "{}"))
+        for bad in ((0.5, 0.5, 0.5), (1.2, -0.1, -0.1)):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                c.execute(sql.INSERT_PREDICTION, ("v-prob", "E0", fut.date(), "man-city", "arsenal", *bad, *bad,
+                                                  "low", "A", "live", fut, 0.6, 0.55, "1-0:0.1"))
+
+
+def test_extra_market_sql_grading_matches_python_rules(pg_uri):
+    """The SQL grader and markets.extra_outcome must agree on every market and scoreline."""
+    import datetime as dt
+    import itertools
+    import psycopg
+    from src import markets, sql
+    base = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=5)
+    cases = list(itertools.product(range(0, 8), range(0, 8)))
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute(sql.INSERT_MODEL_VERSION, ("v-extra", "E9", dt.date(2026, 1, 1), "{}"))
+        expected = {}
+        for n, (hg, ag) in enumerate(cases):
+            home, away = f"h{n}", f"a{n}"
+            c.execute(sql.INSERT_PREDICTION, ("v-extra", "E9", base.date(), home, away, .4, .3, .3, .4, .3, .3,
+                                              "low", "A", "live", base, 0.5, 0.5, "1-1:0.1"))
+            pid = c.execute("SELECT prediction_id FROM predictions WHERE home_team=%s", (home,)).fetchone()[0]
+            for market in markets.EXTRA_MARKETS:
+                sel = "1-1,2-1,0-1,1-0,2-0" if market == "score_top5" else ("2-1" if market == "score_top1" else None)
+                c.execute(sql.INSERT_MARKET_PREDICTION, (pid, market, "", sel, 0.5))
+                expected[(pid, market)] = markets.extra_outcome(market, sel, hg, ag)
+            c.execute(sql.INSERT_RESULT, ("E9", base.date(), home, away, hg, ag,
+                                          "H" if hg > ag else ("D" if hg == ag else "A")))
+        c.execute(sql.SETTLE_EXTRA_MARKETS)
+        c.execute(sql.SETTLE_EXTRA_MARKETS)                      # idempotent
+        rows = c.execute("SELECT mp.prediction_id, mp.market, mo.outcome, mo.brier FROM market_outcomes mo "
+                         "JOIN market_predictions mp USING (market_pred_id) WHERE mp.prediction_id = ANY(%s)",
+                         ([k[0] for k in expected],)).fetchall()
+        assert len(rows) == len(expected)
+        for pid, market, outcome, brier in rows:
+            assert outcome is expected[(pid, market)], (market, outcome)
+            assert abs(brier - 0.25) < 1e-6                      # probability 0.5 -> Brier 0.25 either way
+
+
+def test_market_picks_locked_and_append_only(pg_uri):
+    import datetime as dt
+    import psycopg
+    import pytest
+    from src import sql
+    soon = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=4)
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute(sql.INSERT_MODEL_VERSION, ("v-lock", "E9", dt.date(2026, 1, 1), "{}"))
+        c.execute(sql.INSERT_PREDICTION, ("v-lock", "E9", soon.date(), "lock-h", "lock-a", .4, .3, .3, .4, .3, .3,
+                                          "low", "A", "live", soon, 0.5, 0.5, "1-1:0.1"))
+        pid = c.execute("SELECT prediction_id FROM predictions WHERE home_team='lock-h'").fetchone()[0]
+        c.execute(sql.INSERT_MARKET_PREDICTION, (pid, "dc_1x", "", None, 0.7))          # before kickoff: allowed
+        with pytest.raises(psycopg.errors.CheckViolation):
+            c.execute("INSERT INTO market_predictions (prediction_id, market, probability) VALUES (%s,'x',1.5)", (pid,))
+        c.execute("SELECT pg_sleep(4.5)")
+        with pytest.raises(psycopg.errors.RaiseException):                              # after kickoff: refused
+            c.execute(sql.INSERT_MARKET_PREDICTION, (pid, "dc_x2", "", None, 0.5))
+        with pytest.raises(psycopg.errors.RaiseException):                              # append-only
+            c.execute("UPDATE market_predictions SET probability = 0.9 WHERE prediction_id = %s", (pid,))
+        with pytest.raises(psycopg.errors.RaiseException):
+            c.execute("DELETE FROM market_predictions WHERE prediction_id = %s", (pid,))

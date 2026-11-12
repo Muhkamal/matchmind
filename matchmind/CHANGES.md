@@ -46,3 +46,32 @@ Non-blocking (worker threads), pooled DB, rate limited, cached model, message ch
 - football-data.org club spellings (no network in the build environment): run `check_teams.py`.
 - Real-data backtest numbers (football-data.co.uk unreachable): run `backtest.py`.
 - Migrations and all SQL behaviour were tested on Postgres 16, not on Supabase itself.
+
+## v1.5
+- bot.py: free webhook mode (set WEBHOOK_BASE_URL and WEBHOOK_SECRET); polling remains the default.
+- backtest.py: compares the model with bookmaker closing odds (margin removed) on the same matches; comparison only, never a model input.
+- README: real backtest numbers replace the unverified ones.
+
+## v1.6-1.7
+- Run log: `migration-2026-11-09.sql` adds `job_runs`; nightly writes one row per league; `/api/status` has a `freshness` block and the dashboard explains an empty pick list.
+- CORS open for GET; OpenAPI description (UTC, null, empty-result semantics, field meanings) and examples.
+- `/api/export/predictions.csv`: every live pick with model version, creation time, result and grade, plus `X-Content-SHA256`.
+- Calibration chart has a plain-language summary; dashboard footer links to the CSV and /docs.
+- Telegram `/picks` shows Over/Under 2.5 and BTTS Yes/No (experimental).
+
+## v1.8
+- `migration-2026-11-10.sql`: the database rejects any new prediction whose probabilities are outside 0-1 or do not sum to 1.
+- API calls retry timeouts, connection errors and HTTP 5xx (not just 429), with growing pauses; real errors (401/403/404) still fail at once.
+- Backtest: Elo-only and Dixon-Coles-only Brier, and a paired bootstrap 95% interval for the edge over base rates.
+- CSV export includes `data_cutoff` (the training data's last match date).
+- Dashboard: "What do these numbers mean?" panel.
+
+## v1.9
+- General market ledger: `market_predictions` + `market_outcomes` (append-only, locked before kickoff, graded automatically, Brier-scored). New markets only add rows.
+- 25 markets on it, all read off the reconciled scoreline matrix: Double Chance (1X, X2, 12), Over 1.5/3.5, clean sheets, exact score (most likely / in top 5), Asian handicap half-lines (+/-1.5), win to nil, total-goals bands, team to score 2+/3+, BTTS with Over/Under 2.5. Python and SQL grading rules are kept equal by a test over every market and 64 scorelines.
+- Extra markets are only written for picks inserted in the same run, never retro-fitted to an older locked pick.
+- API: `/api/market-picks`, `/api/market-catalog`, `/api/extra-market-record`. Dashboard: "More markets" section with per-market record vs best constant forecast.
+- Backtest prints each extra market against the best constant forecast.
+- Fixed: bot fixture lookup used the database's local date; now UTC, so it cannot disagree with the UTC match date near midnight.
+
+- Backtest: private flat-stake research test against real closing prices (margin included) with a bootstrap interval. For research only; nothing about stakes or value bets is published.

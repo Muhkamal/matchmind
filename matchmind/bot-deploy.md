@@ -3,6 +3,15 @@
 The bot is a **long-running process** (it polls Telegram). Free web services that sleep when idle will miss messages,
 so use something always on: a small VPS, a Raspberry Pi, Fly.io, Railway, or a Render *background worker* (paid).
 
+## Free option: webhook on a second Render free web service
+No paid plan needed. Telegram pushes each message to your service; if it is asleep, Telegram retries and the
+first reply after idle takes roughly 30-60 seconds. Replies are normal speed after that.
+1. Render, New, Web Service, same repo, Root Directory `matchmind`, Build `pip install -r requirements.txt`, Start `python bot.py`.
+2. Environment variables: `TELEGRAM_BOT_TOKEN`, `BOT_DATABASE_URL`, `WEBHOOK_SECRET` (random letters and digits only, 30+ characters), `WEBHOOK_BASE_URL` (the service's own `https://....onrender.com` address, no trailing slash; add it after the first deploy gives you the address, then redeploy).
+3. Leave the Health Check Path empty for this service.
+4. Free instance hours are shared (about 750 a month). Two services that both sleep are fine; do not keep both awake 24/7.
+Without `WEBHOOK_BASE_URL` the bot falls back to polling (needs an always-on host).
+
 ## Setup
 1. Talk to @BotFather, `/newbot`, copy the token.
 2. Environment (never commit): `TELEGRAM_BOT_TOKEN`, `BOT_DATABASE_URL` (role `matchmind_bot`; can read predictions/results and write only arena tables), optional `OPENAI_API_KEY`.

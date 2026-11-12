@@ -32,7 +32,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src import calibrate, ingest, models, sql, teams  # noqa: E402
+from src import calibrate, ingest, markets, models, sql, teams  # noqa: E402
 from src.dbpool import fetch_df  # noqa: E402
 
 load_dotenv()
@@ -53,6 +53,23 @@ class LeagueReport:
     issues: list[str] = field(default_factory=list)
 
 
+def log_runs(conn, reports, settled_total: int) -> None:
+    """Record one row per league so the public site can show when the job last ran and how it went.
+    Best effort: if the table is missing (migration not applied) the job itself must still succeed."""
+    try:
+        with conn.cursor() as cur:
+            for r in reports:
+                cur.execute(
+                    "INSERT INTO job_runs (league, ok, results_ingested, fixtures_seen, predictions_appended,"
+                    " settled, issues) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (r.league, not r.issues, r.results_ingested, r.fixtures_seen, r.appended,
+                     settled_total, "; ".join(r.issues)[:500] or None))
+        conn.commit()
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        print(f"note: could not write job_runs ({type(e).__name__}); apply migration-2026-11-09.sql")
+
+
 def get_conn():
     import psycopg
     return psycopg.connect(os.environ["DATABASE_URL"])
@@ -64,7 +81,7 @@ def settle(conn) -> dict[str, int]:
     counts = {}
     with conn.cursor() as cur:
         for name, statement in (("1x2", sql.SETTLE_1X2), ("markets", sql.SETTLE_MARKETS),
-                                ("arena", sql.SETTLE_ARENA)):
+                                ("extra", sql.SETTLE_EXTRA_MARKETS), ("arena", sql.SETTLE_ARENA)):
             cur.execute(statement)
             counts[name] = max(cur.rowcount or 0, 0)
     conn.commit()
@@ -151,6 +168,12 @@ def build_rows(model, league: str, fixtures, version_id: str, quality: str):
     return rows, skipped
 
 
+def extra_rows_for(model, home: str, away: str):
+    """Extra match-level markets for one fixture, from the same fitted model as the 1X2 pick."""
+    full = model.predict_full(home, away)
+    return markets.extra_markets(full["matrix"], full["p"])
+
+
 def predict_and_append(conn, league: str, fixtures, report: LeagueReport) -> None:
     fixtures = ingest.only_future(fixtures)
     report.fixtures_seen = len(fixtures)
@@ -170,9 +193,14 @@ def predict_and_append(conn, league: str, fixtures, report: LeagueReport) -> Non
     with conn.cursor() as cur:
         cur.execute(sql.INSERT_MODEL_VERSION,
                     (version_id, league, model.trained_through.date(), json.dumps(params)))
-        if rows:
-            cur.executemany(sql.INSERT_PREDICTION, rows)
-            report.appended = max(cur.rowcount or 0, 0)
+        for row in rows:
+            cur.execute(sql.INSERT_PREDICTION_RETURNING, row)
+            inserted = cur.fetchone()
+            if inserted is None:                      # already locked earlier: leave it, and its markets, alone
+                continue
+            report.appended += 1
+            for market, subject, selection, prob in extra_rows_for(model, row[3], row[4]):
+                cur.execute(sql.INSERT_MARKET_PREDICTION, (inserted[0], market, subject, selection, prob))
     conn.commit()
 
 
@@ -215,6 +243,7 @@ def main() -> int:
             r.issues.append(f"{type(e).__name__}: {e}")
             reports.append(r)
     settled = settle(conn)
+    log_runs(conn, reports, sum(settled.values()))
     conn.close()
 
     print(f"settled: {settled}")
